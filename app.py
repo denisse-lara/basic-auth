@@ -92,7 +92,7 @@ def create_user(current_user):
         "Created user:",
         new_user,
     )
-    return jsonify({"message": "New user created."})
+    return jsonify({"message": "New user created.", "user": new_user.as_dict()})
 
 
 @app.route("/user/<public_id>", methods=["PUT"])
@@ -168,6 +168,105 @@ def login():
     )
 
 
+@app.route("/page", methods=["GET"])
+@token_required
+def get_all_pages(current_user):
+    pages = Page.query.filter_by(user_id=current_user.id).all()
+    output = list(map(lambda p: p.as_dict(), pages))
+    return jsonify({"pages": output})
+
+
+@app.route("/page/<page_id>", methods=["GET"])
+@token_required
+def get_one_page(current_user, page_id):
+    page = Page.query.filter_by(public_id=page_id).first()
+    if not page:
+        return jsonify({"message": "Page not found."})
+    elif page.user_id != current_user.id:
+        return jsonify({"message": "Page doesn't belong to current user."})
+
+    return jsonify({"page": page.as_dict()})
+
+
+@app.route("/page/shared/<public_id>", methods=["GET"])
+def shared_pages(public_id):
+    user = User.query.filter_by(public_id=public_id).first()
+    if not user:
+        return jsonify({"message": "User not found."})
+
+    pages = Page.query.filter_by(user_id=user.id, shared=True).all()
+    output = list(map(lambda p: p.as_dict(), pages))
+    return jsonify({"pages": output})
+
+
+@app.route("/page", methods=["POST"])
+@token_required
+def create_page(current_user):
+    data = request.get_json()
+
+    new_page = Page(
+        public_id=str(uuid.uuid4()),
+        title=data["title"],
+        text=data["text"],
+        created_at=datetime.datetime.utcnow(),
+        user_id=current_user.id,
+        shared=data["shared"],
+    )
+
+    db.session.add(new_page)
+    db.session.commit()
+
+    return jsonify(
+        {
+            "message": "The page '%s' has been created." % new_page.title,
+            "page": new_page.as_dict(),
+        }
+    )
+
+
+@app.route("/page/<page_id>", methods=["PUT"])
+@token_required
+def edit_page(current_user, page_id):
+    page = Page.query.filter_by(public_id=page_id).first()
+    if not page:
+        return jsonify({"message": "Page not found."})
+    elif page.user_id != current_user.id:
+        return jsonify({"message": "Page doesn't belong to current user."})
+
+    data = request.get_json()
+
+    if "shared" in data:
+        page.shared = data["shared"]
+    if "title" in data and data["title"] != "":
+        page.title = data["title"]
+    if "text" in data and data["text"] != "":
+        page.text = data["text"]
+
+    db.session.commit()
+
+    return jsonify(
+        {
+            "message": "The page '%s' has been modified." % page.title,
+            "page": page.as_dict(),
+        }
+    )
+
+
+@app.route("/page/<page_id>", methods=["DELETE"])
+@token_required
+def delete_page(current_user, page_id):
+    page = Page.query.filter_by(public_id=page_id).first()
+    if not page:
+        return jsonify({"message": "Page not found."})
+    elif page.user_id != current_user.id:
+        return jsonify({"message": "Page doesn't belong to current user."})
+
+    title = page.title
+    db.session.delete(page)
+    db.session.commit()
+    return jsonify({"message": "The page '%s' has been deleted." % title})
+
+
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     public_id = db.Column(db.String(50), unique=True, nullable=False)
@@ -189,9 +288,21 @@ class User(db.Model):
 class Page(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     public_id = db.Column(db.String(50), unique=True)
-    text = db.Column(db.String(50))
+    title = db.Column(db.String(50))
+    text = db.Column(db.Text)
     created_at = db.Column(db.DateTime(timezone=False))
+    shared = db.Column(db.Boolean)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+
+    def as_dict(self):
+        return {
+            "public_id": self.public_id,
+            "title": self.title,
+            "text": self.text,
+            "shared": self.shared,
+            "user_id": self.user_id,
+            "created_at": self.created_at,
+        }
 
 
 if __name__ == "__main__":
