@@ -2,4 +2,3 @@
 .flaskenv
 .env
 venv/
-migrations/
