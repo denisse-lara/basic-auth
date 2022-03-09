@@ -35,7 +35,6 @@ def token_required(f):
 
         try:
             data = jwt.decode(token, app.config["SECRET_KEY"], algorithms="HS256")
-            print(data)
             current_user = User.query.filter_by(public_id=data["public_id"]).first()
         except:
             return jsonify({"message": "Token is invalid."}), 401
@@ -45,7 +44,7 @@ def token_required(f):
     return decorated
 
 
-@app.route("/user", methods=["GET"])
+@app.route("/users", methods=["GET"])
 @token_required
 def get_all_users(current_user):
     if not current_user.admin:
@@ -57,13 +56,13 @@ def get_all_users(current_user):
     return jsonify({"users": output})
 
 
-@app.route("/user/<public_id>", methods=["GET"])
+@app.route("/users/<username>", methods=["GET"])
 @token_required
-def get_one_user(current_user, public_id):
+def get_one_user(current_user, username):
     if not current_user.admin:
         return jsonify({"message": "Cannot perform that function!"})
 
-    user = User.query.filter_by(public_id=public_id).first()
+    user = User.query.filter_by(username=username).first()
 
     if not user:
         return jsonify({"message": "No user found."})
@@ -71,7 +70,7 @@ def get_one_user(current_user, public_id):
     return jsonify(user.as_dict())
 
 
-@app.route("/user", methods=["POST"])
+@app.route("/users", methods=["POST"])
 @token_required
 def create_user(current_user):
     if not current_user.admin:
@@ -96,13 +95,13 @@ def create_user(current_user):
     return jsonify({"message": "New user created.", "user": new_user.as_dict()})
 
 
-@app.route("/user/<public_id>", methods=["PUT"])
+@app.route("/users/<username>/promote-admin", methods=["PUT"])
 @token_required
-def promote_user(current_user, public_id):
+def promote_user(current_user, username):
     if not current_user.admin:
         return jsonify({"message": "Cannot perform that function!"})
 
-    user = User.query.filter_by(public_id=public_id).first()
+    user = User.query.filter_by(username=username).first()
 
     if not user:
         return jsonify({"message": "No user found."})
@@ -110,16 +109,16 @@ def promote_user(current_user, public_id):
     user.admin = True
     db.session.commit()
 
-    return jsonify({"message:": "The user %s has been promoted." % user.name})
+    return jsonify({"message:": "The user '%s' has been promoted." % user.username})
 
 
-@app.route("/user/<public_id>", methods=["DELETE"])
+@app.route("/users/<username>", methods=["DELETE"])
 @token_required
-def delete_user(current_user, public_id):
+def delete_user(current_user, username):
     if not current_user.admin:
         return jsonify({"message": "Cannot perform that function!"})
 
-    user = User.query.filter_by(public_id=public_id).first()
+    user = User.query.filter_by(username=username).first()
 
     if not user:
         return jsonify({"message": "No user found."})
@@ -169,40 +168,49 @@ def login():
     )
 
 
-@app.route("/page", methods=["GET"])
+@app.route("/users/<username>/pages", methods=["GET"])
 @token_required
-def get_all_pages(current_user):
-    pages = Page.query.filter_by(user_id=current_user.id).all()
+def get_all_pages(current_user, username):
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({"message": "User doesn't exist."})
+
+    pages = Page.query.filter_by(user_id=user.id).all()
+    if user.id != current_user.id:
+        pages = pages.filter_by(shared=True)
     output = list(map(lambda p: p.as_dict(), pages))
+
     return jsonify({"pages": output})
 
 
-@app.route("/page/<page_id>", methods=["GET"])
+@app.route("/users/<username>/pages/<page_id>", methods=["GET"])
 @token_required
-def get_one_page(current_user, page_id):
+def get_one_page(current_user, username, page_id):
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({"message": "User doesn't exist."})
+
     page = Page.query.filter_by(public_id=page_id).first()
+
     if not page:
         return jsonify({"message": "Page not found."})
-    elif page.user_id != current_user.id:
-        return jsonify({"message": "Page doesn't belong to current user."})
+    elif user.id != page.user_id:
+        return jsonify({"message": "Page doesn't belong to user %s." % user_id})
+    elif current_user.id != page.user_id and not page.shared:
+        return jsonify({"message": "Page is private."})
 
     return jsonify({"page": page.as_dict()})
 
 
-@app.route("/page/shared/<public_id>", methods=["GET"])
-def shared_pages(public_id):
-    user = User.query.filter_by(public_id=public_id).first()
-    if not user:
-        return jsonify({"message": "User not found."})
-
-    pages = Page.query.filter_by(user_id=user.id, shared=True).all()
-    output = list(map(lambda p: p.as_dict(), pages))
-    return jsonify({"pages": output})
-
-
-@app.route("/page", methods=["POST"])
+@app.route("/users/<username>/pages", methods=["POST"])
 @token_required
-def create_page(current_user):
+def create_page(current_user, username):
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({"message": "User doesn't exist."})
+    elif user.id != current_user.id:
+        return jsonify({"message": "Invalid operation."})
+
     data = request.get_json()
 
     new_page = Page(
@@ -225,14 +233,18 @@ def create_page(current_user):
     )
 
 
-@app.route("/page/<page_id>", methods=["PUT"])
+@app.route("/users/<username>/pages/<page_id>", methods=["PUT"])
 @token_required
-def edit_page(current_user, page_id):
+def edit_page(current_user, username, page_id):
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({"message": "User doesn't exist."})
+    elif user.id != current_user.id:
+        return jsonify({"message": "Page doesn't belong to current user."})
+
     page = Page.query.filter_by(public_id=page_id).first()
     if not page:
         return jsonify({"message": "Page not found."})
-    elif page.user_id != current_user.id:
-        return jsonify({"message": "Page doesn't belong to current user."})
 
     data = request.get_json()
 
@@ -253,14 +265,18 @@ def edit_page(current_user, page_id):
     )
 
 
-@app.route("/page/<page_id>", methods=["DELETE"])
+@app.route("/users/<username>/pages/<page_id>", methods=["DELETE"])
 @token_required
-def delete_page(current_user, page_id):
+def delete_page(current_user, username, page_id):
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({"message": "User doesn't exist."})
+    elif user.id != current_user.id:
+        return jsonify({"message": "Page doesn't belong to current user."})
+
     page = Page.query.filter_by(public_id=page_id).first()
     if not page:
         return jsonify({"message": "Page not found."})
-    elif page.user_id != current_user.id:
-        return jsonify({"message": "Page doesn't belong to current user."})
 
     title = page.title
     db.session.delete(page)
